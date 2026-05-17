@@ -5,7 +5,7 @@ import { AdminTestOrderForm } from "@/components/admin-test-order-form";
 import { getCurrentUser, isCurrentUserAdmin } from "@/lib/auth";
 import { getProducts } from "@/lib/catalog-server";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
-import { getWhatsAppConfigError } from "@/lib/whatsapp";
+import { getWhatsAppConfigError, getWhatsAppTestRecipient } from "@/lib/whatsapp";
 
 export default async function AdminPage() {
   if (!isSupabaseConfigured()) {
@@ -45,6 +45,7 @@ export default async function AdminPage() {
 
   const products = await getProducts({ includeInactive: true });
   const whatsappConfigError = getWhatsAppConfigError();
+  const whatsappRecipient = getWhatsAppTestRecipient();
 
   return (
     <main className="mx-auto flex min-h-[calc(100vh-80px)] w-full max-w-7xl flex-col px-6 py-12 lg:px-10">
@@ -79,10 +80,13 @@ export default async function AdminPage() {
           Cette commande test enregistre une commande interne et tente d&apos;envoyer
           un message WhatsApp via Twilio, sans passer par Stripe.
         </p>
+        <div className="mt-4 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">
+          Numero test actuel: <strong>{whatsappRecipient}</strong>
+        </div>
         {whatsappConfigError ? (
           <div className="mt-4 rounded-[1.5rem] border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-900">
-            {whatsappConfigError}. Quand vous me donnerez le numero test, il faudra le
-            renseigner dans `WHATSAPP_TEST_TO`.
+            {whatsappConfigError}. Le numero test est deja preconfigure, mais l&apos;envoi
+            reel exige encore les identifiants Twilio.
           </div>
         ) : null}
         <div className="mt-4">

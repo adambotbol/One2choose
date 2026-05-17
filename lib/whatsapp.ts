@@ -13,12 +13,33 @@ type SendWhatsAppTestMessageInput = {
   lines: WhatsAppLine[];
 };
 
+const DEFAULT_WHATSAPP_TEST_TO = "0607459722";
+
+function normalizePhoneNumber(value: string) {
+  const digits = value.replace(/[^\d+]/g, "");
+
+  if (digits.startsWith("+")) {
+    return digits;
+  }
+
+  if (digits.startsWith("00")) {
+    return `+${digits.slice(2)}`;
+  }
+
+  if (digits.startsWith("0")) {
+    return `+33${digits.slice(1)}`;
+  }
+
+  return `+${digits}`;
+}
+
 function normalizeWhatsAppAddress(value: string) {
-  return value.startsWith("whatsapp:") ? value : `whatsapp:${value}`;
+  const raw = value.startsWith("whatsapp:") ? value.slice("whatsapp:".length) : value;
+  return `whatsapp:${normalizePhoneNumber(raw)}`;
 }
 
 function toWaNumber(value: string) {
-  return value.replace(/^whatsapp:/, "").replace(/[^\d]/g, "");
+  return normalizePhoneNumber(value.replace(/^whatsapp:/, "")).replace(/[^\d]/g, "");
 }
 
 function buildMessage(input: SendWhatsAppTestMessageInput) {
@@ -46,7 +67,6 @@ export function getWhatsAppConfigError() {
     "TWILIO_ACCOUNT_SID",
     "TWILIO_AUTH_TOKEN",
     "TWILIO_WHATSAPP_FROM",
-    "WHATSAPP_TEST_TO",
   ].filter((key) => !process.env[key]);
 
   if (missingVars.length === 0) {
@@ -60,7 +80,7 @@ export async function sendWhatsAppTestMessage(
   input: SendWhatsAppTestMessageInput,
 ) {
   const configError = getWhatsAppConfigError();
-  const recipient = process.env.WHATSAPP_TEST_TO;
+  const recipient = process.env.WHATSAPP_TEST_TO ?? DEFAULT_WHATSAPP_TEST_TO;
   const message = buildMessage(input);
   const previewUrl = recipient
     ? `https://wa.me/${toWaNumber(recipient)}?text=${encodeURIComponent(message)}`
@@ -76,7 +96,7 @@ export async function sendWhatsAppTestMessage(
 
   const body = new URLSearchParams({
     From: normalizeWhatsAppAddress(process.env.TWILIO_WHATSAPP_FROM!),
-    To: normalizeWhatsAppAddress(process.env.WHATSAPP_TEST_TO!),
+    To: normalizeWhatsAppAddress(recipient),
     Body: message,
   });
 
@@ -111,4 +131,8 @@ export async function sendWhatsAppTestMessage(
     error: null,
     previewUrl,
   };
+}
+
+export function getWhatsAppTestRecipient() {
+  return normalizePhoneNumber(process.env.WHATSAPP_TEST_TO ?? DEFAULT_WHATSAPP_TEST_TO);
 }
