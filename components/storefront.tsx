@@ -119,7 +119,7 @@ export function Storefront({
                   One2Choose
                 </p>
                 <h1 className="mt-3 max-w-3xl font-[family-name:var(--font-oswald)] text-5xl uppercase leading-none sm:text-7xl">
-                  Boutique de chaussures avec logistique automatisee.
+                  Vendez des chaussures sans stock et centralisez chaque commande.
                 </h1>
               </div>
               <div className="rounded-[1.5rem] border border-slate-200 bg-slate-950 px-5 py-4 text-white">
@@ -134,9 +134,9 @@ export function Storefront({
             </div>
 
             <p className="mt-8 max-w-2xl text-lg leading-8 text-slate-600">
-              Cette version est concue pour un modele type dropshipping:
-              encaissement en ligne via Stripe, notification marchand, puis
-              instruction fournisseur automatique apres paiement confirme.
+              One2Choose est une vitrine e-commerce pour vendre vos chaussures en
+              ligne, suivre vos clients avec Supabase, encaisser les commandes,
+              puis transmettre automatiquement les details utiles au fournisseur.
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
