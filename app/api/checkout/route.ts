@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
+import type Stripe from "stripe";
+import { getProductById } from "@/lib/catalog-server";
 import { stripe } from "@/lib/stripe";
-import { getProductById } from "@/lib/products";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type CheckoutItem = {
   productId: string;
@@ -14,16 +15,13 @@ type CheckoutPayload = {
 };
 
 function getBaseUrl(request: Request) {
-  return (
-    process.env.NEXT_PUBLIC_SITE_URL ??
-    new URL(request.url).origin
-  );
+  return process.env.NEXT_PUBLIC_SITE_URL ?? new URL(request.url).origin;
 }
 
 export async function POST(request: Request) {
   if (!stripe) {
     return NextResponse.json(
-      { error: "STRIPE_SECRET_KEY is not configured." },
+      { error: "STRIPE_SECRET_KEY n'est pas configure." },
       { status: 500 },
     );
   }
@@ -31,35 +29,37 @@ export async function POST(request: Request) {
   const { items } = (await request.json()) as CheckoutPayload;
 
   if (!items || items.length === 0) {
-    return NextResponse.json(
-      { error: "Your cart is empty." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Votre panier est vide." }, { status: 400 });
   }
 
-  const validatedItems = items
-    .map((item) => {
-      const product = getProductById(item.productId);
+  const validatedItems = (
+    await Promise.all(
+      items.map(async (item) => {
+        const product = await getProductById(item.productId);
 
-      if (!product || !product.sizes.includes(item.size) || item.quantity < 1) {
-        return null;
-      }
+        if (!product || !product.sizes.includes(item.size) || item.quantity < 1) {
+          return null;
+        }
 
-      return {
-        item,
-        product,
-      };
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+        return {
+          item,
+          product,
+        };
+      }),
+    )
+  ).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
   if (validatedItems.length !== items.length) {
     return NextResponse.json(
-      { error: "Some cart items are invalid." },
+      { error: "Certains articles du panier sont invalides." },
       { status: 400 },
     );
   }
 
-  const baseUrl = getBaseUrl(request);
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = (await supabase?.auth.getUser()) ?? { data: { user: null } };
 
   const shippingRates: Stripe.Checkout.SessionCreateParams["shipping_options"] = [
     {
@@ -80,8 +80,8 @@ export async function POST(request: Request) {
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
-    success_url: `${baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${baseUrl}/cancel`,
+    success_url: `${getBaseUrl(request)}/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${getBaseUrl(request)}/cancel`,
     billing_address_collection: "required",
     shipping_address_collection: {
       allowed_countries: ["FR", "BE", "DE", "LU", "NL", "ES", "IT"],
@@ -90,6 +90,7 @@ export async function POST(request: Request) {
       enabled: true,
     },
     shipping_options: shippingRates,
+    customer_email: user?.email,
     line_items: validatedItems.map(({ item, product }) => ({
       quantity: item.quantity,
       price_data: {
@@ -108,6 +109,7 @@ export async function POST(request: Request) {
     })),
     metadata: {
       source: "one2choose-storefront",
+      userId: user?.id ?? "",
     },
   });
 

@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import type { Product } from "@/lib/products";
-import { formatPrice } from "@/lib/products";
+import { useState, useTransition } from "react";
+import { formatPrice, type Product } from "@/lib/catalog";
 
 type CartItem = {
   productId: string;
@@ -14,40 +13,46 @@ type StorefrontProps = {
   checkoutReady: boolean;
   emailReady: boolean;
   products: Product[];
+  supabaseReady: boolean;
 };
 
 export function Storefront({
   checkoutReady,
   emailReady,
   products,
+  supabaseReady,
 }: StorefrontProps) {
   const [selectedSizes, setSelectedSizes] = useState<Record<string, string>>(
-    Object.fromEntries(products.map((product) => [product.id, product.sizes[0]])),
+    Object.fromEntries(products.map((product) => [product.id, product.sizes[0] ?? ""])),
   );
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const detailedCart = useMemo(
-    () =>
-      cart.map((item) => {
-        const product = products.find((entry) => entry.id === item.productId);
+  const detailedCart = cart
+    .map((item) => {
+      const product = products.find((entry) => entry.id === item.productId);
 
-        return product
-          ? {
-              ...item,
-              product,
-              lineTotal: product.price * item.quantity,
-            }
-          : null;
-      }).filter((item): item is NonNullable<typeof item> => item !== null),
-    [cart, products],
-  );
+      if (!product) {
+        return null;
+      }
+
+      return {
+        ...item,
+        product,
+        lineTotal: product.price * item.quantity,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
 
   const total = detailedCart.reduce((sum, item) => sum + item.lineTotal, 0);
 
   function addToCart(productId: string) {
     const size = selectedSizes[productId];
+
+    if (!size) {
+      return;
+    }
 
     setCart((current) => {
       const existingItem = current.find(
@@ -122,9 +127,8 @@ export function Storefront({
                   Workflow
                 </p>
                 <p className="mt-2 max-w-xs text-sm leading-6 text-slate-300">
-                  1. Le client paie.
-                  2. Vous recevez le recapitulatif.
-                  3. Le fournisseur recoit la commande avec l&apos;adresse.
+                  1. Le client paie. 2. Vous recevez le recapitulatif. 3. Le
+                  fournisseur recoit la commande avec l&apos;adresse.
                 </p>
               </div>
             </div>
@@ -139,6 +143,10 @@ export function Storefront({
               <StatusPill
                 active={checkoutReady}
                 label={checkoutReady ? "Stripe pret" : "Configurer Stripe"}
+              />
+              <StatusPill
+                active={supabaseReady}
+                label={supabaseReady ? "Supabase pret" : "Configurer Supabase"}
               />
               <StatusPill
                 active={emailReady}
@@ -177,7 +185,7 @@ export function Storefront({
                       Pointure
                     </label>
                     <select
-                      value={selectedSizes[product.id]}
+                      value={selectedSizes[product.id] ?? ""}
                       onChange={(event) =>
                         setSelectedSizes((current) => ({
                           ...current,
@@ -287,7 +295,7 @@ export function Storefront({
               <button
                 type="button"
                 onClick={handleCheckout}
-                disabled={cart.length === 0 || isPending}
+                disabled={!checkoutReady || cart.length === 0 || isPending}
                 className="mt-6 w-full rounded-full bg-amber-400 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isPending ? "Redirection..." : "Payer maintenant"}
@@ -295,6 +303,9 @@ export function Storefront({
             </div>
 
             <div className="mt-6 space-y-3 text-sm leading-6 text-slate-300">
+              <p>
+                Auth + base: <code>SUPABASE</code>
+              </p>
               <p>
                 Email commercant: <code>MERCHANT_NOTIFICATION_EMAIL</code>
               </p>

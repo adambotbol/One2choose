@@ -1,104 +1,142 @@
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { sendMerchantNotification, sendSupplierNotification } from "@/lib/notifications";
+import { persistOrder } from "@/lib/orders";
 import { stripe } from "@/lib/stripe";
 
-function formatAddress(address?: Stripe.Address | null) {
-  if (!address) {
-    return "Adresse non fournie";
-  }
+function formatStripeAddress(
+  address: Stripe.Address | null | undefined,
+  name?: string | null,
+) {
+  const lines = [
+    name ?? null,
+    address?.line1 ?? null,
+    address?.line2 ?? null,
+    [address?.postal_code, address?.city].filter(Boolean).join(" ") || null,
+    address?.country ?? null,
+  ].filter(Boolean);
 
-  return [
-    address.line1,
-    address.line2,
-    `${address.postal_code ?? ""} ${address.city ?? ""}`.trim(),
-    address.state,
-    address.country,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  return lines.join(", ");
 }
 
-async function buildOrderLines(sessionId: string) {
-  if (!stripe) {
-    return [];
-  }
-
-  const lineItems = await stripe.checkout.sessions.listLineItems(sessionId, {
-    expand: ["data.price.product"],
-  });
-
-  return lineItems.data.map((line) => ({
-    description: line.description ?? "Produit",
-    quantity: line.quantity ?? 0,
-    amountTotal: (line.amount_total ?? 0) / 100,
-    currency: (line.currency ?? "eur").toUpperCase(),
-  }));
+function isStripeProduct(
+  product: string | Stripe.Product | Stripe.DeletedProduct | null | undefined,
+): product is Stripe.Product {
+  return Boolean(product && typeof product !== "string" && !("deleted" in product));
 }
 
 export async function POST(request: Request) {
   if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
     return NextResponse.json(
-      { error: "Stripe webhook is not configured." },
+      { error: "Stripe webhook non configure." },
       { status: 500 },
     );
   }
 
-  const body = await request.text();
-  const signature = (await headers()).get("stripe-signature");
+  const signature = request.headers.get("stripe-signature");
 
   if (!signature) {
-    return NextResponse.json({ error: "Missing signature." }, { status: 400 });
+    return NextResponse.json({ error: "Signature manquante." }, { status: 400 });
   }
 
+  const payload = await request.text();
   let event: Stripe.Event;
 
   try {
     event = stripe.webhooks.constructEvent(
-      body,
+      payload,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET,
     );
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Invalid signature." },
+      {
+        error:
+          error instanceof Error ? error.message : "Signature Stripe invalide.",
+      },
       { status: 400 },
     );
   }
 
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object as Stripe.Checkout.Session;
-    const orderLines = await buildOrderLines(session.id);
-    const shippingAddress = formatAddress(session.customer_details?.address);
-    const customerName = session.customer_details?.name ?? "Client";
-    const customerEmail = session.customer_details?.email ?? "Email non fourni";
-    const customerPhone = session.customer_details?.phone ?? "Telephone non fourni";
-    const totalAmount = (session.amount_total ?? 0) / 100;
-    const currency = (session.currency ?? "eur").toUpperCase();
-
-    await Promise.all([
-      sendMerchantNotification({
-        currency,
-        customerEmail,
-        customerName,
-        customerPhone,
-        orderId: session.id,
-        orderLines,
-        shippingAddress,
-        totalAmount,
-      }),
-      sendSupplierNotification({
-        currency,
-        customerName,
-        customerPhone,
-        orderId: session.id,
-        orderLines,
-        shippingAddress,
-        totalAmount,
-      }),
-    ]);
+  if (event.type !== "checkout.session.completed") {
+    return NextResponse.json({ received: true });
   }
+
+  const session = event.data.object as Stripe.Checkout.Session;
+  const lineItems = await stripe.checkout.sessions.listLineItems(session.id, {
+    expand: ["data.price.product"],
+  });
+  const shippingDetails = session.collected_information?.shipping_details;
+
+  const currency = (session.currency ?? "eur").toUpperCase();
+  const customerName =
+    session.customer_details?.name ??
+    shippingDetails?.name ??
+    "Client One2Choose";
+  const customerEmail = session.customer_details?.email ?? "";
+  const customerPhone = session.customer_details?.phone ?? "";
+  const shippingAddress = formatStripeAddress(
+    shippingDetails?.address ?? session.customer_details?.address,
+    shippingDetails?.name ?? session.customer_details?.name,
+  );
+
+  const items = lineItems.data.map((lineItem) => {
+    const product = lineItem.price?.product;
+    const stripeProduct = isStripeProduct(product) ? product : null;
+    const size = stripeProduct?.metadata.size ?? null;
+
+    return {
+      productId: stripeProduct?.metadata.productId ?? null,
+      productName:
+        stripeProduct?.name ?? lineItem.description ?? "Produit One2Choose",
+      size,
+      quantity: lineItem.quantity ?? 1,
+      unitPriceCents: lineItem.price?.unit_amount ?? 0,
+      currency,
+    };
+  });
+
+  await persistOrder({
+    externalId: session.id,
+    userId: session.metadata?.userId || null,
+    customerName,
+    customerEmail,
+    customerPhone,
+    shippingAddress,
+    status: "paid",
+    currency,
+    items,
+  });
+
+  const notificationLines = items.map((item) => ({
+    description: `${item.productName}${item.size ? ` - Pointure ${item.size}` : ""}`,
+    quantity: item.quantity,
+    amountTotal: (item.unitPriceCents * item.quantity) / 100,
+    currency,
+  }));
+  const totalAmount = (session.amount_total ?? 0) / 100;
+
+  await Promise.all([
+    sendMerchantNotification({
+      orderId: session.id,
+      customerName,
+      customerEmail,
+      customerPhone,
+      shippingAddress,
+      totalAmount,
+      currency,
+      orderLines: notificationLines,
+    }),
+    sendSupplierNotification({
+      orderId: session.id,
+      customerName,
+      customerPhone,
+      shippingAddress,
+      totalAmount,
+      currency,
+      orderLines: notificationLines,
+    }),
+  ]);
 
   return NextResponse.json({ received: true });
 }
